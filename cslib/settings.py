@@ -85,8 +85,8 @@ class Settings(OrderedDict):
         if k not in self and self._model and k in self._model:
             return self.__missing__(k)
 
-        # if k not in self:
-        #    return TemporaryEntry(self, k)
+        if k not in self:
+            return TemporaryEntry(self, k)
 
         return self[k]
 

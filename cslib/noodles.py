@@ -1,5 +1,5 @@
 from noodles.serial import (Serialiser, Registry, base)
-from noodles.serial.numpy import registry as numpy_registry
+from noodles.serial.numpy import arrays_to_string as numpy_registry
 
 from .dataframe import DataFrame, DCS
 from .units import units
