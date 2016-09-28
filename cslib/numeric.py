@@ -2,7 +2,9 @@ from functools import (
     reduce)
 
 import numpy as np
-from numpy import (log, exp)
+from numpy import (log)
+from scipy.integrate import (quad)
+from scipy.optimize import (newton, brentq)
 
 
 def identity(x):
@@ -63,3 +65,30 @@ def log_interpolate(f1, f2, h, a, b):
         return (1 - w) * f1(x) + w * f2(x)
 
     return g
+
+
+def inverse_cdf_table(f, a, b, n, fprime=None):
+    """Takes a PDF function (doesn't have to be normalised), and
+    returns a linearly spaced table of `n` elements giving the
+    inverse cumulative distribution function. The CDF⁻¹ is suitable
+    for generating random numbers following the PDF.
+
+    :param f:
+        PDF
+    :param a:
+        lower limit
+    :param b:
+        upper limit
+    :param n:
+        length of output table"""
+
+    def F(x):
+        return quad(f, a, x)[0]
+
+    A = 1 / F(b)
+    ys = np.linspace(0.0, 1.0, n)
+    x = a
+
+    for y in ys:
+        x = brentq(lambda x: A*F(x) - y, x, b)
+        yield (y, x)
