@@ -1,5 +1,5 @@
 from noodles.serial import (Serialiser, Registry, base)
-from noodles.serial.numpy import arrays_to_string as numpy_registry
+from noodles.serial.numpy import arrays_to_hdf5 as numpy_registry
 
 from .dataframe import DataFrame, DCS
 from .units import units
@@ -53,7 +53,7 @@ def registry():
             DataFrame: SerStandardObject(
                 DataFrame, ['data', 'units', 'comments']),
             DCS: SerStandardObject(
-                DCS, ['energy', 'angle', 'cs'])
+                DCS, ['energy', 'e_u', 'q', 'q_u', 'cs', 'cs_u', 'log'])
         },
         hooks={
             '<quantity>': SerQuantity('<quantity>'),
