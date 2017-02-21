@@ -3,8 +3,8 @@ from functools import (
 
 import numpy as np
 from numpy import (log)
-from scipy.integrate import (quad)
-from scipy.optimize import (newton, brentq)
+from scipy.integrate import (romberg)
+from scipy.optimize import (brentq)
 
 
 def identity(x):
@@ -57,6 +57,10 @@ def linear_interpolate(f1, f2, h, a, b):
 def log_interpolate(f1, f2, h, a, b):
     """Interpolate two functions `f1` and `f2` using interpolation
     function `h`, which maps [0,1] to [0,1] one-to-one."""
+    assert callable(f1)
+    assert callable(f2)
+    assert callable(h)
+
     def weight(x):
         return np.clip(log(x / a) / log(b / a), 0.0, 1.0)
 
@@ -67,7 +71,7 @@ def log_interpolate(f1, f2, h, a, b):
     return g
 
 
-def inverse_cdf_table(f, a, b, n, fprime=None):
+def inverse_cdf_table(f, a, b, ys, fprime=None):
     """Takes a PDF function (doesn't have to be normalised), and
     returns a linearly spaced table of `n` elements giving the
     inverse cumulative distribution function. The CDF⁻¹ is suitable
@@ -83,12 +87,12 @@ def inverse_cdf_table(f, a, b, n, fprime=None):
         length of output table"""
 
     def F(x):
-        return quad(f, a, x)[0]
+        return romberg(f, a, x, vec_func=True)
 
     A = 1 / F(b)
-    ys = np.linspace(0.0, 1.0, n)
+    # ys = np.linspace(0.0, 1.0, n)
     x = a
 
     for y in ys:
         x = brentq(lambda x: A*F(x) - y, x, b)
-        yield (y, x)
+        yield x

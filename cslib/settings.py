@@ -91,8 +91,9 @@ class Settings(OrderedDict):
         return self[k]
 
     def __deepcopy__(self, memo):
-        return Settings(_data=[(k, deepcopy(v, memo)) for k, v in self.items()],
-                        _model=self._model)
+        return Settings(
+            _data=[(k, deepcopy(v, memo)) for k, v in self.items()],
+            _model=self._model)
 
     # def __getstate__(self):
     #    return {'data': super(Settings, self), 'model': self._model}
@@ -190,6 +191,16 @@ def check_settings(s: Settings, d: Model):
 @Predicate
 def is_settings(obj):
     return isinstance(obj, Settings)
+
+
+def conforms(m: Model):
+    @Predicate
+    def _conforms(s: Settings):
+        if not is_settings(s):
+            return False
+        return check_settings(s, m)
+
+    return _conforms
 
 
 def each_value_conforms(m: Model):

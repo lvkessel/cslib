@@ -7,6 +7,7 @@ from .units import (units)
 
 class Predicate:
     def __init__(self, f):
+        assert callable(f)
         self.f = f
 
     def __call__(self, v):
