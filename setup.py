@@ -28,8 +28,8 @@ setup(
         'Development Status :: 4 - Beta',
         'Programming Language :: Python :: 3',
         'Topic :: Scientific/Engineering :: Physics'],
-    install_requires=['pint', 'numpy'],
+    install_requires=['pint', 'numpy', 'scipy'],
     extras_require={
-        'test': ['nose']
+        'test': ['pytest']
     },
 )

@@ -2,7 +2,10 @@ from functools import (reduce)
 from copy import (copy, deepcopy)
 from collections import OrderedDict
 
-from .predicates import (Predicate)
+from .predicates import (Predicate, predicate)
+
+from ruamel import yaml
+import textwrap
 
 
 class TemporaryEntry(object):
@@ -154,6 +157,23 @@ class Type(object):
         self.transformer = transformer
         self.parser = parser
 
+    def display(self, prefix=''):
+        if isinstance(self.check, Predicate):
+            check_str = self.check.display()
+        else:
+            check_str = self.check.__name__
+
+        if callable(self.default):
+            default_str = '<computed from other settings>'
+        else:
+            default_str = str(self.default)
+
+        return textwrap.indent('\n'.join(textwrap.wrap(
+                    self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
+            '\n' + prefix + '' + \
+            '\n' + prefix + '(default) ' + default_str + \
+            '\n' + prefix + '(type)    ' + check_str
+
 
 class Model(Settings):
     """Settings can be matched against a template to check correctness of
@@ -180,6 +200,52 @@ class Model(Settings):
             "or Type: got {}".format(v))
 
 
+def parse_to_model(model, data):
+    s = Settings(_model=model)
+    for k, v in data.items():
+        if k not in model:
+            raise KeyError("Key {k} not in model.".format(k=k))
+        s[k] = model[k].parser(v)
+    return s
+
+
+def transform_settings(model, settings):
+    return yaml.comments.CommentedMap(
+            (k, model[k].transformer(v))
+            for k, v in settings.items())
+
+
+class ModelType(Type):
+    """Specialisation of the Type class, in the case of nested settings.
+    Since a Model is a subclass  of Settings we cannot really attach
+    metadata to the object, but we do want to automate type checking for
+    nested settings, since it is a common thing to do.
+
+    This allows giving a model a name and adding a description."""
+    def __init__(self, m: Model, name: str, description: str, check=None,
+                 obligatory=False):
+        if check is not None:
+            check = conforms(m, name) & check
+        else:
+            check = conforms(m, name)
+
+        super(ModelType, self).__init__(
+                description,
+                check=check, obligatory=obligatory,
+                parser=lambda d: parse_to_model(m, d),
+                transformer=lambda d: transform_settings(m, d))
+        self.model = m
+
+    def display(self, prefix=''):
+        return textwrap.indent('\n'.join(textwrap.wrap(
+                    self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
+            '\n' + prefix + '\n' + \
+            ('\n' + prefix + '\n').join(
+                prefix + '+ ' + k + '\n' +
+                self.model[k].display(prefix=prefix+'|   ')
+                for k in self.model.keys())
+
+
 def check_settings(s: Settings, d: Model):
     for k, v in s.items():
         if not d[k].check(v):
@@ -188,13 +254,13 @@ def check_settings(s: Settings, d: Model):
     return True
 
 
-@Predicate
+@predicate("Settings")
 def is_settings(obj):
     return isinstance(obj, Settings)
 
 
-def conforms(m: Model):
-    @Predicate
+def conforms(m: Model, description=""):
+    @predicate("Model <{}>".format(description))
     def _conforms(s: Settings):
         if not is_settings(s):
             return False
@@ -203,9 +269,12 @@ def conforms(m: Model):
     return _conforms
 
 
-def each_value_conforms(m: Model):
-    @Predicate
+def each_value_conforms(m: Model, description=""):
+    @predicate("{{key: Model <{}>}}".format(description))
     def _each_value_conforms(s: Settings):
+        if not is_settings(s):
+            return False
+
         for v in s.values():
             if not check_settings(v, m):
                 return False
