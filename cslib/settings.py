@@ -1,14 +1,39 @@
 from functools import (reduce)
 from copy import (copy, deepcopy)
 from collections import OrderedDict
+import textwrap
+
+from ruamel import yaml
 
 from .predicates import (Predicate, predicate)
 
-from ruamel import yaml
-import textwrap
-
 
 class TemporaryEntry(object):
+    """When a setting is assigned to it could very well be that the location
+    assigned to, does not yet exist. Now, suppose a deep layered is_settings
+    object, where we want to assign to a key within a key that does not exist.
+    Once the bottom level key is assigned to, the mid-level settings objects
+    need to be created. This is done by building up a path into this non-
+    existing location on the fly and assigning at the end using the index
+    syntax.
+
+    For example, the following line::
+
+        settings.a.b.c = 42
+
+    gets translated into::
+
+        settings[a.b.c] = 42
+
+    whenever `settings` does not contain an entry `a`.
+
+    To effectuate this behaviour the `Settings` class generates a
+    `TemporaryEntry` when an attribute is missing. An object of this type
+    will just build the attribute path and act upon assignment. The expression::
+
+        'a' in settings
+
+    will still evaluate to `False`."""
     def __init__(self, settings, key):
         self._d = settings
         self._k = key
@@ -30,9 +55,45 @@ class TemporaryEntry(object):
 
 
 class Settings(OrderedDict):
-    """A dictionary with additional additional accessability.
-    Behaviour of a `Settings` object should mimic Javascript.
-    The keys of the dictionary are restricted to be strings.
+    """A dictionary with additional additional accessability. Behaviour of a
+    `Settings` object should mimic Javascript. The keys of the dictionary are
+    restricted to be strings. The `Settings` object can be supplied with a
+    `Model` to determine how certain elements should be serialised and also
+    how to retrieve defaults for missing entries.
+
+    Basic interface
+    ---------------
+
+    Accessing attributes of a `Settings` object is identical to getting an item
+    from one::
+
+        >>> settings = Settings()
+        >>> settings.a = "Omelet du fromage"
+        >>> settings.a == settings['a']
+        True
+
+    It is possible to assign to an attribute path in a `Settings` object without
+    first creating intermediate nested levels of settings::
+
+        >>> settings = Settings()
+        >>> 'x' in settings
+        False
+        >>> settings.x.y.z = 3
+        >>> 'x' in settings
+        True
+
+    This means that referencing an attribute always returns a value, if the
+    attribute does not exist, this will be a `TemporaryEntry`, which is falsy::
+
+        >>> settings = Settings()
+        >>> bool(settings.b)
+        False
+
+    Adding a Model
+    --------------
+
+    A `Model` has to be supplied at construction time; we don't want to muddy
+    the object interface with this feature.
     """
     def __init__(self, _data=None, _model=None, **kwargs):
         if _data:
@@ -98,14 +159,8 @@ class Settings(OrderedDict):
             _data=[(k, deepcopy(v, memo)) for k, v in self.items()],
             _model=self._model)
 
-    # def __getstate__(self):
-    #    return {'data': super(Settings, self), 'model': self._model}
-
     def __setstate__(self, rec):
         self._model = rec['_model']
-        # self._model = rec['model']
-        # for k, v in rec['data']:
-        #    self[k] = v
 
     def __setattr__(self, k, v):
         if k[0] == '_':
@@ -138,23 +193,23 @@ class Type(object):
     .. :py:attribute:: obligatory
         (bool) Is the parameter obligatory?
 
-    .. :py:attribute:: transformer
+    .. :py:attribute:: generator
         (any -> str) A function that transforms the value into a string
         suitable for this application. By default the `__str__` method
         (usual Python print method) is used.
 
     .. :py:attribute:: parser
-        (str|number|dict -> any) Inverse of transformer. Takes JSON
+        (str|number|dict -> any) Inverse of generator. Takes JSON
         compatible data.
     """
     def __init__(self, description, default=None, check=None,
-                 obligatory=False, transformer=identity,
+                 obligatory=False, generator=identity,
                  parser=identity):
         self.description = description
         self.default = default
         self.check = check
         self.obligatory = obligatory
-        self.transformer = transformer
+        self.generator = generator
         self.parser = parser
 
     def display(self, prefix=''):
@@ -209,10 +264,19 @@ def parse_to_model(model, data):
     return s
 
 
-def transform_settings(model, settings):
-    return yaml.comments.CommentedMap(
-            (k, model[k].transformer(v))
-            for k, v in settings.items())
+def generate_settings(settings):
+    """Create a `CommentedMap` from a `Settings` object. If the settings have
+    an underlying `Model`, that model is used to generate output, otherwise
+    `str` is called on the values. This function can be considered to be the
+    inverse of `parse_to_model`."""
+    if hasattr(settings, '_model'):
+        return yaml.comments.CommentedMap(
+                (k, settings._model[k].generator(v))
+                for k, v in settings.items())
+    else:
+        return yaml.comments.CommentedMap(
+                (k, str(v))
+                for k, v in settings.items())
 
 
 class ModelType(Type):
@@ -233,7 +297,7 @@ class ModelType(Type):
                 description,
                 check=check, obligatory=obligatory,
                 parser=lambda d: parse_to_model(m, d),
-                transformer=lambda d: transform_settings(m, d))
+                generator=lambda d: transform_settings(m, d))
         self.model = m
 
     def display(self, prefix=''):
