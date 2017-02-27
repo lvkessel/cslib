@@ -30,6 +30,6 @@ setup(
         'Topic :: Scientific/Engineering :: Physics'],
     install_requires=['pint', 'numpy', 'scipy'],
     extras_require={
-        'test': ['pytest']
+        'test': ['pytest', 'sphinx']
     },
 )

@@ -1,5 +1,5 @@
 from functools import (reduce)
-from copy import (copy, deepcopy)
+from copy import (deepcopy)
 from collections import OrderedDict
 import textwrap
 
@@ -23,13 +23,14 @@ class TemporaryEntry(object):
 
     gets translated into::
 
-        settings[a.b.c] = 42
+        settings['a.b.c'] = 42
 
     whenever `settings` does not contain an entry `a`.
 
     To effectuate this behaviour the `Settings` class generates a
     `TemporaryEntry` when an attribute is missing. An object of this type
-    will just build the attribute path and act upon assignment. The expression::
+    will just build the attribute path and act upon assignment. The
+    expression::
 
         'a' in settings
 
@@ -61,19 +62,24 @@ class Settings(OrderedDict):
     `Model` to determine how certain elements should be serialised and also
     how to retrieve defaults for missing entries.
 
-    Basic interface
-    ---------------
+    :Basic interface:
 
     Accessing attributes of a `Settings` object is identical to getting an item
-    from one::
+    from one:
+
+    .. testsetup::
+
+        from cslib import Settings
+
+    .. doctest::
 
         >>> settings = Settings()
         >>> settings.a = "Omelet du fromage"
         >>> settings.a == settings['a']
         True
 
-    It is possible to assign to an attribute path in a `Settings` object without
-    first creating intermediate nested levels of settings::
+    It is possible to assign to an attribute path in a `Settings` object
+    without first creating intermediate nested levels of settings::
 
         >>> settings = Settings()
         >>> 'x' in settings
@@ -89,8 +95,7 @@ class Settings(OrderedDict):
         >>> bool(settings.b)
         False
 
-    Adding a Model
-    --------------
+    :Adding a Model:
 
     A `Model` has to be supplied at construction time; we don't want to muddy
     the object interface with this feature.
@@ -212,6 +217,25 @@ class Type(object):
         self.generator = generator
         self.parser = parser
 
+    def restructured_text(self, prefix=''):
+        """Prints information in reStructured Text layout, suitable for
+        inclusion in Sphinx doc."""
+        if isinstance(self.check, Predicate):
+            check_str = self.check.display()
+        else:
+            check_str = self.check.__name__
+
+        if callable(self.default):
+            default_str = '<computed from other settings>'
+        else:
+            default_str = str(self.default)
+
+        return textwrap.indent('\n'.join(textwrap.wrap(
+                self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
+            '\n' + prefix + '' + \
+            '\n' + prefix + '(default) ' + default_str + \
+            '\n' + prefix + '(type)    ' + check_str
+
     def display(self, prefix=''):
         if isinstance(self.check, Predicate):
             check_str = self.check.display()
@@ -224,7 +248,7 @@ class Type(object):
             default_str = str(self.default)
 
         return textwrap.indent('\n'.join(textwrap.wrap(
-                    self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
+                self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
             '\n' + prefix + '' + \
             '\n' + prefix + '(default) ' + default_str + \
             '\n' + prefix + '(type)    ' + check_str
@@ -233,7 +257,11 @@ class Type(object):
 class Model(Settings):
     """Settings can be matched against a template to check correctness of
     data types and structure etc. At the same time the template can act as
-    a way to create default settings."""
+    a way to create default settings.
+
+    A :py:class:`Model` can only contain objects of class :py:class:`Type`
+    and :py:class:`Model`. There is a special :py:class:`ModelType` that
+    automates validation of nested :py:class:`Model` instances."""
     def __init__(self, _data=None, **kwargs):
         super(Model, self).__init__(**kwargs)
         if _data is not None:
@@ -256,6 +284,9 @@ class Model(Settings):
 
 
 def parse_to_model(model, data):
+    """Takes a `Model` and generic `dict` like data. Returns a `Settings`
+    object where the items in the dictionary have been parsed following
+    the parsers specified in the model."""
     s = Settings(_model=model)
     for k, v in data.items():
         if k not in model:
@@ -297,12 +328,12 @@ class ModelType(Type):
                 description,
                 check=check, obligatory=obligatory,
                 parser=lambda d: parse_to_model(m, d),
-                generator=lambda d: transform_settings(m, d))
+                generator=lambda d: generate_settings(d))
         self.model = m
 
     def display(self, prefix=''):
         return textwrap.indent('\n'.join(textwrap.wrap(
-                    self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
+                self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
             '\n' + prefix + '\n' + \
             ('\n' + prefix + '\n').join(
                 prefix + '+ ' + k + '\n' +
@@ -324,6 +355,8 @@ def is_settings(obj):
 
 
 def conforms(m: Model, description=""):
+    """Returns a `Predicate` that checks if a value conforms a certain
+    `Model`."""
     @predicate("Model <{}>".format(description))
     def _conforms(s: Settings):
         if not is_settings(s):
@@ -334,6 +367,8 @@ def conforms(m: Model, description=""):
 
 
 def each_value_conforms(m: Model, description=""):
+    """Returns a `Predicate` that checks if a value is a `Settings` object, of
+    which each value conforms the given `Model`."""
     @predicate("{{key: Model <{}>}}".format(description))
     def _each_value_conforms(s: Settings):
         if not is_settings(s):
@@ -346,30 +381,3 @@ def each_value_conforms(m: Model, description=""):
             return True
 
     return _each_value_conforms
-
-
-def apply_defaults_and_check(s: Settings, d: Model):
-    s = Settings(**s)
-
-    for k in d:
-        if k not in s:
-            if isinstance(d[k], Model):
-                s[k] = Settings()
-            elif d[k].obligatory:
-                raise Exception("Setting `{}` is obligatory but was not"
-                                " given.".format(k))
-            else:
-                s[k] = copy(d[k].default)
-
-        if isinstance(d[k], Model):
-            if not isinstance(s[k], Settings):
-                raise TypeError(
-                    "Sub-folder {} of settings should be a collection."
-                    .format(k))
-            s[k] = apply_defaults_and_check(s[k], d[k])
-
-        if not d[k].check(s[k]):
-            raise TypeError(
-                    "Type-check for setting `{}` failed: {}".format(k, s[k]))
-
-    return s

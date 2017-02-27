@@ -1,3 +1,7 @@
+"""
+A system of self-describing predicates.
+"""
+
 import numbers
 import collections
 import os
@@ -6,6 +10,15 @@ from .units import (units)
 
 
 class Predicate:
+    """Strictly, a function of one argument that returns a boolean
+    value. Decorated with this class, such a function becomes composable
+    and self-documenting.
+
+    The logic operators `|`, `&`, and `~` have been overloaded to compose
+    the underlying predicates into new predicate with a matching description.
+
+    TODO: parse the descriptions at composition to get correct operator
+    precedence. For example, `a | b & c != (a | b) & c`."""
     def __init__(self, f, description=""):
         assert callable(f)
         self.f = f
@@ -24,7 +37,7 @@ class Predicate:
 
     def __invert__(self):
         return Predicate(lambda v: not self.f(v),
-                         "!" + self.description)
+                         "~" + self.description)
 
     def display(self):
         return self.description
@@ -109,7 +122,7 @@ def is_list_of(p):
     return _is_list_of
 
 
-@predicate("File")
+@predicate("file exists")
 def file_exists(path: str):
     abspath = os.path.abspath(path)
     return os.path.exists(abspath)
