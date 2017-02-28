@@ -1,3 +1,56 @@
+"""This module implements a system for parsing, validating and generating
+:py:class:`Settings` from a generic description in a :py:class:`Model`.
+We'll work through a small example. Suppose we have a code that computes
+the trajectory of a cannon ball. We need to give the ball a starting position,
+mass, and starting velocity. Let's start with the position, it has three
+dimensions and should have units of length.
+
+.. doctest::
+
+    >>> import numpy as np
+    >>> from cslib import (units)
+    >>> from cslib.predicates import (predicate, has_units)
+    >>> def array_dim(*n):
+    ...     @predicate("array_dim({})".format(', '.join(map(str, n))))
+    ...     def _array_dim(a):
+    ...         if not isinstance(a.magnitude, np.ndarray):
+    ...             return False
+    ...         return a.shape == n
+    ...     return _array_dim
+    ...
+    >>> position_check = array_dim(3) & has_units('m')
+    >>> position_check.display()
+    'array_dim(3) & [length] (e.g. m)'
+    >>> position_check(np.r_[1, 2, 3] * units.mm)
+    True
+    >>> position_check(1 * units.m)               # not an array
+    False
+    >>> position_check(np.r_[4, 5] * units.km)    # wrong shape
+    False
+    >>> position_check(np.r_[6, 7, 8] * units.J)  # wrong unit
+    False
+
+Now we define the :py:class:`Type` that describes the entry in the
+:py:class:`Model`. We need to define two functions, one that parses
+an array with units, and one that formats an array with units to
+a string::
+
+    >>> def parse_array(s):
+    ...     expr = '\[\s*(?P<numbers>(\S+\s*,\s*)*(\S+))\s*\]\s+(?P<unit>\S+)'
+    ...     m = re.match(expr, s)
+    ...     numbers, unit = m.group('numbers', 'unit')
+    ...     return np.array([ast.literal_eval(n.strip())
+    ...                     for n in numbers.split(',')]) * units(unit)
+    ...
+    >>> def format_array(a):
+    ...     return "[{}] {:~P}".format(
+    ...         ", ".join(map(str, a.magnitude)), a.units)
+    ...
+    >>> position_type = Type("The position of the cannon.",
+    ...     check=position_check,
+    ...     parser=parse_array, generator=format_array)
+"""
+
 from functools import (reduce)
 from copy import (deepcopy)
 from collections import OrderedDict
