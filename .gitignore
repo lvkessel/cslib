@@ -93,3 +93,6 @@ ENV/
 .*.swp
 .*.swo
 
+# sphinx
+doc/_build
+

@@ -1,14 +1,93 @@
+"""This module implements a system for parsing, validating and generating
+:py:class:`Settings` from a generic description in a :py:class:`Model`.
+We'll work through a small example. Suppose we have a code that computes
+the trajectory of a cannon ball. We need to give the ball a starting position,
+mass, and starting velocity. Let's start with the position, it has three
+dimensions and should have units of length.
+
+.. doctest::
+
+    >>> import numpy as np
+    >>> from cslib import (units)
+    >>> from cslib.predicates import (predicate, has_units)
+    >>> def array_dim(*n):
+    ...     @predicate("array_dim({})".format(', '.join(map(str, n))))
+    ...     def _array_dim(a):
+    ...         if not isinstance(a.magnitude, np.ndarray):
+    ...             return False
+    ...         return a.shape == n
+    ...     return _array_dim
+    ...
+    >>> position_check = array_dim(3) & has_units('m')
+    >>> position_check.display()
+    'array_dim(3) & [length] (e.g. m)'
+    >>> position_check(np.r_[1, 2, 3] * units.mm)
+    True
+    >>> position_check(1 * units.m)               # not an array
+    False
+    >>> position_check(np.r_[4, 5] * units.km)    # wrong shape
+    False
+    >>> position_check(np.r_[6, 7, 8] * units.J)  # wrong unit
+    False
+
+Now we define the :py:class:`Type` that describes the entry in the
+:py:class:`Model`. We need to define two functions, one that parses
+an array with units, and one that formats an array with units to
+a string::
+
+    >>> def parse_array(s):
+    ...     expr = '\[\s*(?P<numbers>(\S+\s*,\s*)*(\S+))\s*\]\s+(?P<unit>\S+)'
+    ...     m = re.match(expr, s)
+    ...     numbers, unit = m.group('numbers', 'unit')
+    ...     return np.array([ast.literal_eval(n.strip())
+    ...                     for n in numbers.split(',')]) * units(unit)
+    ...
+    >>> def format_array(a):
+    ...     return "[{}] {:~P}".format(
+    ...         ", ".join(map(str, a.magnitude)), a.units)
+    ...
+    >>> position_type = Type("The position of the cannon.",
+    ...     check=position_check,
+    ...     parser=parse_array, generator=format_array)
+"""
+
 from functools import (reduce)
-from copy import (copy, deepcopy)
+from copy import (deepcopy)
 from collections import OrderedDict
+import textwrap
+
+from ruamel import yaml
 
 from .predicates import (Predicate, predicate)
 
-from ruamel import yaml
-import textwrap
-
 
 class TemporaryEntry(object):
+    """When a setting is assigned to it could very well be that the location
+    assigned to, does not yet exist. Now, suppose a deep layered is_settings
+    object, where we want to assign to a key within a key that does not exist.
+    Once the bottom level key is assigned to, the mid-level settings objects
+    need to be created. This is done by building up a path into this non-
+    existing location on the fly and assigning at the end using the index
+    syntax.
+
+    For example, the following line::
+
+        settings.a.b.c = 42
+
+    gets translated into::
+
+        settings['a.b.c'] = 42
+
+    whenever `settings` does not contain an entry `a`.
+
+    To effectuate this behaviour the `Settings` class generates a
+    `TemporaryEntry` when an attribute is missing. An object of this type
+    will just build the attribute path and act upon assignment. The
+    expression::
+
+        'a' in settings
+
+    will still evaluate to `False`."""
     def __init__(self, settings, key):
         self._d = settings
         self._k = key
@@ -30,9 +109,49 @@ class TemporaryEntry(object):
 
 
 class Settings(OrderedDict):
-    """A dictionary with additional additional accessability.
-    Behaviour of a `Settings` object should mimic Javascript.
-    The keys of the dictionary are restricted to be strings.
+    """A dictionary with additional additional accessability. Behaviour of a
+    `Settings` object should mimic Javascript. The keys of the dictionary are
+    restricted to be strings. The `Settings` object can be supplied with a
+    `Model` to determine how certain elements should be serialised and also
+    how to retrieve defaults for missing entries.
+
+    :Basic interface:
+
+    Accessing attributes of a `Settings` object is identical to getting an item
+    from one:
+
+    .. testsetup::
+
+        from cslib import Settings
+
+    .. doctest::
+
+        >>> settings = Settings()
+        >>> settings.a = "Omelet du fromage"
+        >>> settings.a == settings['a']
+        True
+
+    It is possible to assign to an attribute path in a `Settings` object
+    without first creating intermediate nested levels of settings::
+
+        >>> settings = Settings()
+        >>> 'x' in settings
+        False
+        >>> settings.x.y.z = 3
+        >>> 'x' in settings
+        True
+
+    This means that referencing an attribute always returns a value, if the
+    attribute does not exist, this will be a `TemporaryEntry`, which is falsy::
+
+        >>> settings = Settings()
+        >>> bool(settings.b)
+        False
+
+    :Adding a Model:
+
+    A `Model` has to be supplied at construction time; we don't want to muddy
+    the object interface with this feature.
     """
     def __init__(self, _data=None, _model=None, **kwargs):
         if _data:
@@ -98,14 +217,8 @@ class Settings(OrderedDict):
             _data=[(k, deepcopy(v, memo)) for k, v in self.items()],
             _model=self._model)
 
-    # def __getstate__(self):
-    #    return {'data': super(Settings, self), 'model': self._model}
-
     def __setstate__(self, rec):
         self._model = rec['_model']
-        # self._model = rec['model']
-        # for k, v in rec['data']:
-        #    self[k] = v
 
     def __setattr__(self, k, v):
         if k[0] == '_':
@@ -138,24 +251,43 @@ class Type(object):
     .. :py:attribute:: obligatory
         (bool) Is the parameter obligatory?
 
-    .. :py:attribute:: transformer
+    .. :py:attribute:: generator
         (any -> str) A function that transforms the value into a string
         suitable for this application. By default the `__str__` method
         (usual Python print method) is used.
 
     .. :py:attribute:: parser
-        (str|number|dict -> any) Inverse of transformer. Takes JSON
+        (str|number|dict -> any) Inverse of generator. Takes JSON
         compatible data.
     """
     def __init__(self, description, default=None, check=None,
-                 obligatory=False, transformer=identity,
+                 obligatory=False, generator=identity,
                  parser=identity):
         self.description = description
         self.default = default
         self.check = check
         self.obligatory = obligatory
-        self.transformer = transformer
+        self.generator = generator
         self.parser = parser
+
+    def restructured_text(self, prefix=''):
+        """Prints information in reStructured Text layout, suitable for
+        inclusion in Sphinx doc."""
+        if isinstance(self.check, Predicate):
+            check_str = self.check.display()
+        else:
+            check_str = self.check.__name__
+
+        if callable(self.default):
+            default_str = '<computed from other settings>'
+        else:
+            default_str = str(self.default)
+
+        return textwrap.indent('\n'.join(textwrap.wrap(
+                self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
+            '\n' + prefix + '' + \
+            '\n' + prefix + '(default) ' + default_str + \
+            '\n' + prefix + '(type)    ' + check_str
 
     def display(self, prefix=''):
         if isinstance(self.check, Predicate):
@@ -169,7 +301,7 @@ class Type(object):
             default_str = str(self.default)
 
         return textwrap.indent('\n'.join(textwrap.wrap(
-                    self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
+                self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
             '\n' + prefix + '' + \
             '\n' + prefix + '(default) ' + default_str + \
             '\n' + prefix + '(type)    ' + check_str
@@ -178,7 +310,11 @@ class Type(object):
 class Model(Settings):
     """Settings can be matched against a template to check correctness of
     data types and structure etc. At the same time the template can act as
-    a way to create default settings."""
+    a way to create default settings.
+
+    A :py:class:`Model` can only contain objects of class :py:class:`Type`
+    and :py:class:`Model`. There is a special :py:class:`ModelType` that
+    automates validation of nested :py:class:`Model` instances."""
     def __init__(self, _data=None, **kwargs):
         super(Model, self).__init__(**kwargs)
         if _data is not None:
@@ -201,6 +337,9 @@ class Model(Settings):
 
 
 def parse_to_model(model, data):
+    """Takes a `Model` and generic `dict` like data. Returns a `Settings`
+    object where the items in the dictionary have been parsed following
+    the parsers specified in the model."""
     s = Settings(_model=model)
     for k, v in data.items():
         if k not in model:
@@ -209,10 +348,19 @@ def parse_to_model(model, data):
     return s
 
 
-def transform_settings(model, settings):
-    return yaml.comments.CommentedMap(
-            (k, model[k].transformer(v))
-            for k, v in settings.items())
+def generate_settings(settings):
+    """Create a `CommentedMap` from a `Settings` object. If the settings have
+    an underlying `Model`, that model is used to generate output, otherwise
+    `str` is called on the values. This function can be considered to be the
+    inverse of `parse_to_model`."""
+    if hasattr(settings, '_model'):
+        return yaml.comments.CommentedMap(
+                (k, settings._model[k].generator(v))
+                for k, v in settings.items())
+    else:
+        return yaml.comments.CommentedMap(
+                (k, str(v))
+                for k, v in settings.items())
 
 
 class ModelType(Type):
@@ -233,12 +381,12 @@ class ModelType(Type):
                 description,
                 check=check, obligatory=obligatory,
                 parser=lambda d: parse_to_model(m, d),
-                transformer=lambda d: transform_settings(m, d))
+                generator=lambda d: generate_settings(d))
         self.model = m
 
     def display(self, prefix=''):
         return textwrap.indent('\n'.join(textwrap.wrap(
-                    self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
+                self.description, width=66 - len(prefix))), prefix+'⋮ ') + \
             '\n' + prefix + '\n' + \
             ('\n' + prefix + '\n').join(
                 prefix + '+ ' + k + '\n' +
@@ -260,6 +408,8 @@ def is_settings(obj):
 
 
 def conforms(m: Model, description=""):
+    """Returns a `Predicate` that checks if a value conforms a certain
+    `Model`."""
     @predicate("Model <{}>".format(description))
     def _conforms(s: Settings):
         if not is_settings(s):
@@ -270,6 +420,8 @@ def conforms(m: Model, description=""):
 
 
 def each_value_conforms(m: Model, description=""):
+    """Returns a `Predicate` that checks if a value is a `Settings` object, of
+    which each value conforms the given `Model`."""
     @predicate("{{key: Model <{}>}}".format(description))
     def _each_value_conforms(s: Settings):
         if not is_settings(s):
@@ -282,30 +434,3 @@ def each_value_conforms(m: Model, description=""):
             return True
 
     return _each_value_conforms
-
-
-def apply_defaults_and_check(s: Settings, d: Model):
-    s = Settings(**s)
-
-    for k in d:
-        if k not in s:
-            if isinstance(d[k], Model):
-                s[k] = Settings()
-            elif d[k].obligatory:
-                raise Exception("Setting `{}` is obligatory but was not"
-                                " given.".format(k))
-            else:
-                s[k] = copy(d[k].default)
-
-        if isinstance(d[k], Model):
-            if not isinstance(s[k], Settings):
-                raise TypeError(
-                    "Sub-folder {} of settings should be a collection."
-                    .format(k))
-            s[k] = apply_defaults_and_check(s[k], d[k])
-
-        if not d[k].check(s[k]):
-            raise TypeError(
-                    "Type-check for setting `{}` failed: {}".format(k, s[k]))
-
-    return s
