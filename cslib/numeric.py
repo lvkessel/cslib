@@ -4,6 +4,7 @@ from functools import (
 import numpy as np
 from numpy import (log)
 from scipy.integrate import (romberg)
+from scipy.interpolate import (interp1d)
 from scipy.optimize import (brentq)
 
 
@@ -17,44 +18,30 @@ def compose(*f):
     return reduce(compose_2, f, identity)
 
 
-def interpolate(f1, f2, h, a, b):
+def interpolate_f(f1, f2, h, a, b):
     """Interpolate two functions `f1` and `f2` using interpolation
     function `h`, which maps [0,1] to [0,1] one-to-one."""
     def g(x):
         y1 = f1(x)
         y2 = f2(x)
-        u = (x - a) / (b - a)
+
+        # Convert units and strip, to keep pint happy
+        units = y1.units
+        y2 = y2.to(units).magnitude
+        y1 = y1.magnitude
+
+        u = np.clip((x - a) / (b - a), 0.0, 1.0)
         w = h(u)
         ym = (1 - w) * y1 + w * y2
 
         return np.where(
             x < a, y1, np.where(
-                x > b, y2, ym))
+                x > b, y2, ym)) * units
 
     return g
 
 
-def linear_interpolate(f1, f2, h, a, b):
-    ya = f1(a)
-    yb = f2(b)
-
-    def fm(x):
-        n = h((x - a) / (b - a))
-        return (1 - n) * ya + n * yb
-
-    def g(x):
-        y1 = f1(x)
-        y2 = f2(x)
-        ym = fm(x)
-
-        return np.where(
-            x < a, y1, np.where(
-                x > b, y2, ym))
-
-    return g
-
-
-def log_interpolate(f1, f2, h, a, b):
+def log_interpolate_f(f1, f2, h, a, b):
     """Interpolate two functions `f1` and `f2` using interpolation
     function `h`, which maps [0,1] to [0,1] one-to-one."""
     assert callable(f1)
@@ -65,34 +52,38 @@ def log_interpolate(f1, f2, h, a, b):
         return np.clip(log(x / a) / log(b / a), 0.0, 1.0)
 
     def g(x):
-        w = h(weight(x))
-        return (1 - w) * f1(x) + w * f2(x)
+        y1 = f1(x)
+        y2 = f2(x)
 
+        # Convert units and strip, to keep pint happy
+        units = y1.units
+        y2 = y2.to(units).magnitude
+        y1 = y1.magnitude
+
+        u = np.clip(log(x / a) / log(b / a), 0.0, 1.0)
+        w = h(u)
+        ym = (1 - w) * y1 + w * y2
+
+        return np.where(
+            x < a, y1, np.where(
+                x > b, y2, ym)) * units
     return g
 
 
-def inverse_cdf_table(f, a, b, ys, fprime=None):
-    """Takes a PDF function (doesn't have to be normalised), and
-    returns a linearly spaced table of `n` elements giving the
-    inverse cumulative distribution function. The CDF⁻¹ is suitable
-    for generating random numbers following the PDF.
+def loglog_interpolate(x, y, bounds_error=None, fill_value='extrapolate'):
+    """Interpolate a function (given by arrays of data points x, y) on a
+    log-log scale.
 
-    :param f:
-        PDF
-    :param a:
-        lower limit
-    :param b:
-        upper limit
-    :param n:
-        length of output table"""
+    If fill_value is equal to 'extrapolate', out-of-bounds accesses are
+    extrapolated on a log-log scale. Otherwise, if bounds_error is False,
+    out-of-bounds accesses are filled with fill_value. If bounds_error is
+    True, an error is raised for out-of-bounds accesses."""
 
-    def F(x):
-        return romberg(f, a, x, vec_func=True)
+    interp_function = interp1d(np.log(x.magnitude), np.log(y.magnitude),
+        bounds_error = bounds_error, fill_value = fill_value)
 
-    A = 1 / F(b)
-    # ys = np.linspace(0.0, 1.0, n)
-    x = a
+    def g(x_points):
+        return np.exp(interp_function(
+            np.log(x_points.to(x.units).magnitude))) * y.units
 
-    for y in ys:
-        x = brentq(lambda x: A*F(x) - y, x, b)
-        yield x
+    return g

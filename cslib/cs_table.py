@@ -1,5 +1,6 @@
 from functools import reduce
 import numpy as np
+from scipy.interpolate import RegularGridInterpolator
 from . import units as ur
 
 
@@ -21,9 +22,6 @@ class DCS(object):
         self.q = q
         self.cs = cs
 
-        self._E_log_steps = np.log(self.energy[1:]/self.energy[:-1])
-        self._q_steps = self.q[1:] - self.q[:-1]
-
         assert energy.shape == (energy.size, 1), \
             "Energy should be column vector."
         assert q.shape == (q.size,), \
@@ -31,28 +29,18 @@ class DCS(object):
 
         assert energy.dimensionality == ur.J.dimensionality, \
             "Energy units check."
-        assert cs.dimensionality == (ur.m**2 / q.units).dimensionality, \
+        assert cs.dimensionality in (             \
+            (ur.m**2 / q.units).dimensionality,   \
+            (ur.m**-1 / q.units).dimensionality), \
             "Cross-section units check."
         assert cs.shape == (energy.size, q.size), \
             "Array dimensions do not match."
 
-    @property
-    def angle(self):
-        assert self.q.dimensionality == ur.rad.dimensionality
-        return self.q
-
-    @staticmethod
-    def from_function(f, E, a):
-        return DCS(E, a, f(E, a))
-
-    def save_gnuplot(self, filename):
-        xlen, ylen = self.cs.shape
-        gp_bin = np.zeros(dtype='float32', shape=[xlen+1, ylen+1])
-        gp_bin[0, 0] = xlen
-        gp_bin[1:, 0:1] = self.energy.to('eV')
-        gp_bin[0, 1:] = self.q
-        gp_bin[1:, 1:] = self.cs.to(ur('cm²') / self.q.units)
-        gp_bin.transpose().tofile(filename)
+        self.interpolate_fn = RegularGridInterpolator((
+            np.log(self.energy.magnitude.flat),
+            self.q.magnitude.flat),
+            self.cs.magnitude,
+            bounds_error = False, fill_value = 0)
 
     def __rmul__(self, other):
         return DCS(self.energy, self.q, self.cs * other)
@@ -65,42 +53,7 @@ class DCS(object):
             "to add DCS, axes should match"
         return DCS(self.energy, self.q, self.cs + other.cs)
 
-    def __call__(self, E, a):
-        """Multi-linear interpolation on this DCS table.
-        The interpolation is log-linear on energy and linear on angle."""
-        # get the nearest grid locations for the energy -> masked array
-        E_idx = np.searchsorted(self.energy.to('eV').flat,
-                                E.to('eV').flat)[:, None]
-        mE_idx = np.ma.array(
-            E_idx - 1,
-            mask=np.logical_or(E_idx == 0,
-                               E_idx == self.energy.size))
-        # compute the weight factor
-        E_w = np.log(E / np.ma.take(self.energy, mE_idx) / E.units) \
-            / np.ma.take(self._E_log_steps, mE_idx)
-
-        # get the nearest grid locations for the angle -> masked array
-        qu = self.q.units
-        search_a = ur.wraps(None, [qu, qu])(np.searchsorted)
-        a_idx = search_a(self.q, a)
-        ma_idx = np.ma.array(
-            a_idx - 1,
-            mask=np.logical_or(a_idx == 0,
-                               a_idx == self.q.size))
-        # compute the weight factor
-        a_w = (a - np.ma.take(self.q, ma_idx)) \
-            / np.ma.take(self._q_steps, ma_idx)
-
-        # take elements from a masked NdArray
-        def take(a, *ix):
-            i = np.meshgrid(*ix[::-1])[::-1]
-            m = reduce(np.logical_or, [j.mask for j in i])
-            return np.ma.array(a[[j.filled(0) for j in i]], mask=m)
-
-        new_cs = (1 - E_w) * (1 - a_w) * take(self.cs, mE_idx, ma_idx) \
-            + E_w * (1 - a_w) * take(self.cs, mE_idx + 1, ma_idx) \
-            + (1 - E_w) * a_w * take(self.cs, mE_idx, ma_idx + 1) \
-            + E_w * a_w * take(self.cs, mE_idx + 1, ma_idx + 1)
-
-        # set values outside the range to zero
-        return new_cs.filled(0.0) * self.cs.units
+    def __call__(self, E, q):
+        return self.interpolate_fn((
+            np.log(E.to(self.energy.units).magnitude), \
+            q.to(self.q.units).magnitude)) * self.cs.units

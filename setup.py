@@ -12,7 +12,7 @@ with open(path.join(here, 'README.rst'), encoding='utf-8') as f:
 
 setup(
     name='cslib',
-    version='0.1.0',
+    version='0.2.0',
     long_description=long_description,
     description='Common library for the pyElsepa and CSTool packages.',
     license='Apache v2',
