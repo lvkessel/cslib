@@ -28,7 +28,7 @@ setup(
         'Development Status :: 4 - Beta',
         'Programming Language :: Python :: 3',
         'Topic :: Scientific/Engineering :: Physics'],
-    install_requires=['pint==0.8.1', 'numpy==1.13.0', 'scipy==0.19.1', 'noodles[numpy,prov]==0.2.3'],
+    install_requires=['pint==0.8.1', 'numpy==1.13.3', 'scipy==1.0.0', 'noodles[numpy,prov]==0.2.4'],
     extras_require={
         'test': ['pytest', 'sphinx']
     },
